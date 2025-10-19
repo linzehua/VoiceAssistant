@@ -27,7 +27,9 @@ def voice_assistant(configs):
     # 临时文件删掉
 
 if __name__ == '__main__':
-    configs = json.load(open('config_keys.json'))
+    import  sys, json
+    config_file = sys.argv[1]
+    configs = json.load(open(config_file))
     voice_assistant(configs)
 
     # 假设添加语音唤醒
