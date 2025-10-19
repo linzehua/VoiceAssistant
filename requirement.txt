@@ -2,3 +2,4 @@ pyttsx3
 openai-whisper
 pyaudio
 webrtcvad
+librosa

@@ -1,16 +1,21 @@
 import pyaudio
 import webrtcvad
-import threading
 import time
+import wave
+import os
 from collections import deque
+from datetime import datetime
+import numpy as np
 
 
 class VADRecorder:
     """
-    VAD语音活动检测录音类 - 负责检测语音开始和结束
+    单线程阻塞式VAD语音活动检测录音类
+    录音完成后直接返回语音数据
     """
 
-    def __init__(self, sample_rate=16000, chunk_size=512, vad_aggressiveness=2):
+    def __init__(self, sample_rate=16000, chunk_size=512, vad_aggressiveness=2,
+                 silence_timeout=2.0, max_record_duration=10.0, pre_record_duration=1.0):
         """
         初始化VAD录音器
 
@@ -18,63 +23,44 @@ class VADRecorder:
             sample_rate: 采样率(必须为8000,16000,32000)
             chunk_size: 数据块大小
             vad_aggressiveness: VAD敏感度(1-3)
+            silence_timeout: 静音超时时间(秒)
+            max_record_duration: 最大录音时长(秒)
+            pre_record_duration: 预录音时长(秒)
         """
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
-        self.is_recording = False
-        self.audio_data = b''
+        self.silence_timeout = silence_timeout
+        self.max_record_duration = max_record_duration
+        self.pre_record_duration = pre_record_duration
 
-        # 初始化VAD
+        # 初始化VAD [1,3](@ref)
         self.vad = webrtcvad.Vad()
         self.vad.set_mode(vad_aggressiveness)
 
         # VAD参数
-        self.vad_frame_duration = 30  # 30ms帧
+        self.vad_frame_duration = 30  # 30ms帧 [1](@ref)
         self.vad_frame_size = int(sample_rate * self.vad_frame_duration / 1000)
-
-        # 录音参数
-        self.silence_timeout = 2.0  # 静音超时
-        self.max_recording_duration = 10.0  # 最大录音时长
-
-        # 状态跟踪
-        self.last_voice_time = 0
-        self.recording_start_time = 0
-        self.consecutive_silence_frames = 0
-        self.consecutive_voice_frames = 0
 
         # 音频流
         self.audio = pyaudio.PyAudio()
         self.stream = None
 
-        # 回调函数
-        self.on_recording_start = None
-        self.on_recording_end = None
-        self.on_audio_data = None
-
-    def start_recording(self, pre_record_duration=1.0, audio_cache=None):
-        """
-        开始录音
-
-        Args:
-            pre_record_duration: 预录音时长(秒)
-            audio_cache: AudioCache实例，用于获取预录音数据
-        """
-        if self.is_recording:
-            return
-
-        self.is_recording = True
+        # 状态变量
+        self.is_recording = False
         self.audio_data = b''
-        self.last_voice_time = time.time()
-        self.recording_start_time = time.time()
-        self.consecutive_silence_frames = 0
-        self.consecutive_voice_frames = 0
 
-        # 获取预录音数据
-        if audio_cache and pre_record_duration > 0:
-            pre_recorded_audio, _ = audio_cache.get_recent_audio(pre_record_duration)
-            self.audio_data = pre_recorded_audio
+    def record(self):
+        """
+        单线程阻塞式录音方法
+        开始录音并阻塞直到录音完成，返回音频数据
 
-        # 打开音频流
+        Returns:
+            bytes: 录音数据(PCM格式)
+            bool: 是否成功录音
+        """
+        print("开始VAD录音...")
+
+        # 打开音频流 [6,8](@ref)
         self.stream = self.audio.open(
             format=pyaudio.paInt16,
             channels=1,
@@ -83,76 +69,89 @@ class VADRecorder:
             frames_per_buffer=self.chunk_size
         )
 
-        # 触发开始回调
-        if self.on_recording_start:
-            self.on_recording_start()
+        self.is_recording = True
+        self.audio_data = b''
 
-        # 开始录音线程
-        self.recording_thread = threading.Thread(target=self._record_loop)
-        self.recording_thread.daemon = True
-        self.recording_thread.start()
+        # 状态跟踪变量
+        last_voice_time = time.time()
+        recording_start_time = time.time()
+        consecutive_silence_frames = 0
+        consecutive_voice_frames = 0
+        has_speech = False
 
-    def stop_recording(self):
-        """停止录音"""
-        self.is_recording = False
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-
-    def _record_loop(self):
-        """录音主循环"""
-        print("VAD录音开始...")
+        # 预录音缓冲区（环形缓冲区）
+        pre_record_buffer = deque(maxlen=int(self.pre_record_duration * self.sample_rate / self.chunk_size))
 
         try:
             while self.is_recording:
-                # 检查超时
+                # 检查最大录音时长
                 current_time = time.time()
-                if (current_time - self.recording_start_time) > self.max_recording_duration:
+                if (current_time - recording_start_time) > self.max_record_duration:
                     print("达到最大录音时长，停止录音")
                     break
 
                 # 读取音频数据
                 data = self.stream.read(self.chunk_size, exception_on_overflow=False)
-                self.audio_data += data
 
-                # VAD检测
-                has_speech = self._vad_detect_speech(data)
+                # 保存到预录音缓冲区
+                pre_record_buffer.append(data)
 
-                if has_speech:
-                    self.last_voice_time = current_time
-                    self.consecutive_voice_frames += 1
-                    self.consecutive_silence_frames = 0
+                # VAD检测 [1,3](@ref)
+                has_speech_now = self._vad_detect_speech(data)
+
+                if has_speech_now:
+                    # 检测到语音
+                    if not has_speech:
+                        print("检测到语音开始")
+                        # 将预录音数据添加到正式录音中
+                        for pre_data in pre_record_buffer:
+                            self.audio_data += pre_data
+                        pre_record_buffer.clear()
+                        has_speech = True
+
+                    last_voice_time = current_time
+                    consecutive_voice_frames += 1
+                    consecutive_silence_frames = 0
+                    self.audio_data += data
+
                 else:
-                    self.consecutive_silence_frames += 1
-                    self.consecutive_voice_frames = 0
+                    # 静音
+                    consecutive_silence_frames += 1
+                    consecutive_voice_frames = 0
 
-                # 检查语音结束条件
-                if (self.consecutive_voice_frames > 0 and
-                        self.consecutive_silence_frames > int(self.silence_timeout * 1000 / self.vad_frame_duration)):
-                    print("检测到语音结束")
-                    break
-
-                # 实时回调
-                if self.on_audio_data:
-                    self.on_audio_data(data, has_speech)
+                    if has_speech:
+                        # 已经在录音中，检查静音超时
+                        silence_duration = current_time - last_voice_time
+                        if silence_duration > self.silence_timeout:
+                            print(f"检测到静音超时({silence_duration:.1f}s)，停止录音")
+                            break
+                        else:
+                            # 仍在录音，继续添加数据
+                            self.audio_data += data
 
         except Exception as e:
             print(f"录音错误: {e}")
+            return None, False
+
         finally:
+            # 清理资源
             self.is_recording = False
             if self.stream:
                 self.stream.stop_stream()
                 self.stream.close()
 
-            # 触发结束回调
-            if self.on_recording_end:
-                self.on_recording_end(self.audio_data)
-
-        print("VAD录音结束")
+        # 检查是否录到了有效语音
+        if has_speech and len(self.audio_data) > 0:
+            duration = len(self.audio_data) / (self.sample_rate * 2)  # 16bit = 2字节
+            print(f"录音完成，时长: {duration:.2f}秒，数据大小: {len(self.audio_data)}字节")
+            return self.audio_data, True
+        else:
+            print("未检测到有效语音")
+            return None, False
 
     def _vad_detect_speech(self, audio_data):
         """
-        使用VAD检测语音活动
+        使用VAD检测语音活动 [1,3](@ref)
 
         Args:
             audio_data: 音频数据
@@ -164,35 +163,71 @@ class VADRecorder:
         if len(audio_data) < self.vad_frame_size * 2:  # 16bit = 2字节
             return False
 
+        speech_frames = 0
+        total_frames = 0
+
         try:
             # 检测每个VAD帧
             for i in range(0, len(audio_data) - self.vad_frame_size * 2, self.vad_frame_size * 2):
                 frame = audio_data[i:i + self.vad_frame_size * 2]
                 if len(frame) == self.vad_frame_size * 2:
                     if self.vad.is_speech(frame, self.sample_rate):
-                        return True
-        except:
-            pass
+                        speech_frames += 1
+                    total_frames += 1
+        except Exception as e:
+            print(f"VAD检测错误: {e}")
+            return False
+
+        # 如果超过40%的帧检测到语音，则认为有语音活动 [3](@ref)
+        if total_frames > 0 and speech_frames / total_frames > 0.4:
+            return True
 
         return False
 
-    def get_audio_data(self):
-        """获取录音数据"""
-        return self.audio_data
+    def close(self):
+        """释放资源"""
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+        self.audio.terminate()
 
-    def set_callbacks(self, on_start=None, on_end=None, on_data=None):
-        """设置回调函数"""
-        self.on_recording_start = on_start
-        self.on_recording_end = on_end
-        self.on_audio_data = on_data
+if __name__ == "__main__":# 创建录音器实例
+    from wav_utils import save_to_wav
+    recorder = VADRecorder(
+        sample_rate=16000,
+        chunk_size=512,
+        vad_aggressiveness=2,  # VAD敏感度
+        silence_timeout=1.5,   # 静音超时1.5秒
+        max_record_duration=10, # 最大录音10秒
+        pre_record_duration=1.0 # 预录音1秒
+    )
 
+    try:
+        print("准备开始录音，请说话...")
+        print("检测到静音后会自动停止录音")
 
-if __name__ == "__main__":
-    recorder = VADRecorder()
-    recorder.start_recording()
-    recorder.stop_recording()
+        # 方法1: 录音并返回数据
+        audio_data, success = recorder.record()
 
-    audio_data = recorder.get_audio_data()
-    import numpy as np
-    audio_data = np.frombuffer(audio_data, dtype=np.int16)
-    print(audio_data)
+        if success:
+            print("录音成功!")
+
+            # 保存文件
+            filename = save_to_wav(audio_data, "my_recording.wav")
+            print(f"文件已保存: {filename}")
+
+            # 可以继续处理音频数据...
+            # 例如传递给语音识别引擎
+            audio_data = np.frombuffer(audio_data, dtype=np.int16)
+            print(audio_data)
+
+        else:
+            print("录音失败或未检测到语音")
+
+    except KeyboardInterrupt:
+        print("用户中断录音")
+    except Exception as e:
+        print(f"录音过程中发生错误: {e}")
+    finally:
+        recorder.close()
+
