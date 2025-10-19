@@ -15,6 +15,8 @@ def llm_answer(user_text, access_key):
         messages=[
             {"role": "system", "content": "你叫小爱同学，你是一个智能语音助手，可以回答我的问题"},
             {"role": "user", "content": user_text},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "..."},
         ],
         stream=False
     )

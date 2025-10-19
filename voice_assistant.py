@@ -8,25 +8,28 @@ import time
 
 from voice_cache import VoiceCache
 from speech_wakeup import WakeupWordDetector
+from vad_recorder import VADRecorder
 
 
 def voice_assistant(configs):
     cache = VoiceCache()
+    detector = WakeupWordDetector(wakeup_word='小爱同学')
+    vad_recorder = VADRecorder()
     cache.start()
 
     while True:
-        detector = WakeupWordDetector(wakeup_word='小爱同学')
         audio = cache.get_audio(duration=2)
         if detector.detect(audio):
             print(detector.wakeup_word)
 
             # 启动后续的语音助手交互流程
             # 录音
-            tmp_wav_file = "user.wav"
-            record_audio(tmp_wav_file, duration=10)
+            vad_recorder.start_recording()
+            vad_recorder.stop_recording()
+            audio_data = vad_recorder.get_audio_data()
 
             # 语音转文字
-            user_text = recognize_speech(tmp_wav_file)
+            user_text = recognize_speech(audio_data)
             print("user:", user_text)
 
             # 语言模型回答

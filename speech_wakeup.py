@@ -27,8 +27,8 @@ if __name__ == "__main__":
     cache = VoiceCache()
     cache.start()
     import time
+    detector = WakeupWordDetector(wakeup_word='小爱同学')
     while True:
-        detector = WakeupWordDetector(wakeup_word='小爱同学')
         audio = cache.get_audio(duration=2)
         if detector.detect(audio):
             print(detector.wakeup_word)
