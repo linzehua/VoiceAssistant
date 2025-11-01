@@ -1,17 +1,17 @@
 # 级联方案语音助手
-from language_model import  llm_answer
-from text_to_speech import  tts
-from playsound import playsound
+from backend.language_model import  llm_answer
+from backend.text_to_speech import  tts
 import time
 
-from voice_cache import VoiceCache
-from speech_wakeup import WakeupWordDetector
-from vad_recorder import VADRecorder
-from speech_recognition import SpeechRecognizer
+from frontend.voice_cache import VoiceCache
+from frontend.speech_wakeup import WakeupWordDetector
+from frontend.vad_recorder import VADRecorder
+from backend.speech_recognition import SpeechRecognizer
 import winsound
 
 
 def voice_assistant(configs):
+    # 前端
     cache = VoiceCache()
     detector = WakeupWordDetector(wakeup_word='小爱同学')
     vad_recorder = VADRecorder(
@@ -22,10 +22,10 @@ def voice_assistant(configs):
         max_record_duration=10, # 最大录音10秒
         pre_record_duration=1.0 # 预录音1秒
     )
+    cache.start()
 
     asr_model = SpeechRecognizer()
 
-    cache.start()
 
     while True:
         audio = cache.get_audio(duration=2)
@@ -69,7 +69,7 @@ def voice_assistant(configs):
 if __name__ == '__main__':
     import  sys, json
     if len(sys.argv) < 2:
-        config_file = "config_keys.json"
+        config_file = "backend/config_keys.json"
     else:
         config_file = sys.argv[1]
     configs = json.load(open(config_file))

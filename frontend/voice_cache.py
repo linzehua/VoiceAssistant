@@ -61,6 +61,7 @@ class VoiceCache:
 
     def stop(self):
         self.is_running = False
+        self.cache = np.array([], dtype=np.int16)
 
 
 
@@ -80,11 +81,10 @@ class VoiceCache:
 
 
 if __name__ == '__main__':
-    from wav_utils import save_to_wav
+    from utils.wav_utils import save_to_wav
     cache = VoiceCache()
     cache.start()
 
-    import time
     for i in range(3):
         time.sleep(5)
         audio_data = cache.get_audio(5)

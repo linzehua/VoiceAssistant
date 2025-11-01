@@ -25,7 +25,7 @@ class WakeupWordDetector:
         cc = opencc.OpenCC("t2s")
         simplified_text = cc.convert(result['text'])
         return self.wakeup_word in simplified_text
-
+        # return len(simplified_text) > 0
 
 if __name__ == "__main__":
     from voice_cache import VoiceCache, save_to_wav

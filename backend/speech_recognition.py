@@ -24,8 +24,8 @@ class SpeechRecognizer:
         return simplified_text
 
 if __name__ == '__main__':
-    from wav_utils import wav_resample, load_audio
-    wav_file = 'user.wav'
+    from utils.wav_utils import wav_resample, load_audio
+    wav_file = '../user.wav'
     wav, sr = load_audio(wav_file)
     wav = wav_resample(wav, sr, 16000)
     recognizer = SpeechRecognizer()

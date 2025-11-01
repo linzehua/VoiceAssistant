@@ -1,4 +1,5 @@
-config_keys.json
+backend/config_keys.json
 *.wav
 .idea
 __pycache__/
+recordings/

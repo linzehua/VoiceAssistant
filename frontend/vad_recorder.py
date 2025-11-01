@@ -1,10 +1,7 @@
 import pyaudio
 import webrtcvad
 import time
-import wave
-import os
 from collections import deque
-from datetime import datetime
 import numpy as np
 
 
@@ -192,7 +189,7 @@ class VADRecorder:
         self.audio.terminate()
 
 if __name__ == "__main__":# 创建录音器实例
-    from wav_utils import save_to_wav
+    from utils.wav_utils import save_to_wav
     recorder = VADRecorder(
         sample_rate=16000,
         chunk_size=512,
