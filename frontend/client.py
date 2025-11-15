@@ -36,7 +36,11 @@ class Client:
 
         while True:
             audio = self.cache.get_audio(duration=2)
-            if self.detector.detect(audio):
+            start_time = time.time()
+            wakeup = self.detector.detect(audio)
+            end_time = time.time()
+            duration = end_time - start_time
+            if wakeup:
                 print("检测到：======= ", self.detector.wakeup_word)
                 self.cache.stop()
                 session_id = ""

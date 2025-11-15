@@ -3,3 +3,5 @@ backend/config_keys.json
 .idea
 __pycache__/
 recordings/
+third-party/
+.idea/
